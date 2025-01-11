@@ -1,0 +1,176 @@
+package main;
+
+import arc.*;
+import arc.func.Cons;
+import arc.util.CommandHandler;
+import arc.util.CommandHandler.CommandResponse;
+import arc.util.CommandHandler.ResponseType;
+import arc.util.Log;
+import arc.util.Time;
+import mindustry.Vars;
+import mindustry.game.EventType.PlayerChatEvent;
+import mindustry.gen.*;
+import mindustry.mod.Plugin;
+import mindustry.net.Administration.Config;
+import mindustry.net.NetConnection;
+import mindustry.net.Packets.KickReason;
+import mindustry.net.ValidateException;
+
+import com.xpdustry.flex.FlexAPI;
+import com.xpdustry.flex.translator.*;
+
+import java.util.Locale;
+
+import static mindustry.Vars.*;
+
+public class TranslatorMain extends Plugin {
+    static Translator t;
+
+    @Override
+    public void init() {
+        t = FlexAPI.get().getTranslator();
+        Vars.net.handleServer(SendChatMessageCallPacket.class, (con, p) -> {
+            intercept(con, p);
+        });
+    }
+
+    @Override
+    public void registerClientCommands(CommandHandler handler) {
+        handler.removeCommand("t");
+        handler.<Player>register("t", "<message...>", "Send a message only to your teammates.", (args, player) -> {
+            String message = netServer.admins.filterMessage(player, args[0]);
+            if (message != null) {
+                Groups.player.each(p -> p.team() == player.team(), o -> {
+                    String raw = "[#" + player.team().color.toString() + "]<T> "
+                            + netServer.chatFormatter.format(player, message);
+                    if (o == player) {
+                        o.sendMessage(raw, player, message);
+                        return;
+                    }
+                    translate(message, new Locale(o.locale()), x -> {
+                        if (x.hashCode() != message.hashCode())
+                            o.sendMessage(raw, player, message + " [accent](" + x + ")");
+                        else
+                            o.sendMessage(raw, player, message);
+
+                    });
+                });
+            }
+        });
+
+    }
+
+    public String unify(String m) {
+        var x = m.toCharArray();
+        String out = new String();
+        if ((int) x[x.length - 1] > 0xf80 && (int) x[x.length - 1] < 0x107f) {
+            for (int n = 0; n < x.length - 2; n++) {
+                out += x[n];
+            }
+        }
+        return out;
+    }
+
+    public void translate(String msg, Locale to, Cons<String> when) {
+        t.translate(msg, Translator.getAUTO_DETECT(), to).whenComplete((result, throwable) -> {
+            // Log.debug("translation of @ to @: @ (@)", msg, to, result, throwable);
+            if (result != null)
+                when.get(result);
+            if (!(throwable instanceof RateLimitedException
+                    || throwable instanceof UnsupportedLanguageException)) {
+                Log.err(throwable);
+            }
+        });
+    }
+
+    public void intercept(NetConnection con, SendChatMessageCallPacket p) {
+        var message = p.message;
+        final var player = con.player;
+        // do not receive chat messages from clients that are too young or not
+        // registered
+        if (net.server() && player != null && player.con != null && (Time.timeSinceMillis(player.con.connectTime) < 500
+                || !player.con.hasConnected || !player.isAdded()))
+            return;
+
+        // detect and kick for foul play
+        if (player != null && player.con != null && !player.con.chatRate.allow(2000, Config.chatSpamLimit.num())) {
+            player.con.kick(KickReason.kick);
+            netServer.admins.blacklistDos(player.con.address);
+            return;
+        }
+
+        if (message == null)
+            return;
+
+        if (message.length() > maxTextLength) {
+            throw new ValidateException(player, "Player has sent a message above the text limit.");
+        }
+
+        message = unify(message.replace("\n", ""));
+
+        Events.fire(new PlayerChatEvent(player, message));
+
+        // log commands before they are handled
+        if (message.startsWith(netServer.clientCommands.getPrefix())) {
+            // log with brackets
+            Log.info("<&fi@: @&fr>", "&lk" + player.plainName(), "&lw" + message);
+        }
+
+        // check if it's a command
+        CommandResponse response = netServer.clientCommands.handleMessage(message, player);
+        if (response.type == ResponseType.noCommand) { // no command to handle
+            final var msg = netServer.admins.filterMessage(player, message);
+            // suppress chat message if it's filtered out
+            if (msg == null) {
+                return;
+            }
+
+            translate(msg, new Locale("en"), result -> {
+                Log.info("&fi@: @", "&lc" + player.plainName(),
+                        "&lw" + msg + " (" + result + ")");
+            });
+            // server console logging
+            // Log.info("&fi@: @", "&lc" + player.plainName(), "&lw" + message);
+
+            // invoke event for all clients but also locally
+            // this is required so other clients get the correct name even if they don't
+            // know who's sending it yet
+            Groups.player.each(ply -> {
+                if (ply == player) {
+                    player.sendUnformatted(player, msg);
+                    return;
+                }
+                translate(msg, new Locale(ply.locale()), result -> {
+                    if (result.hashCode() != msg.hashCode()) {
+                        Call.sendMessage(ply.con(), netServer.chatFormatter.format(player, msg),
+                                msg + " [accent](" + result + ")", player);
+                    } else {
+                        Call.sendMessage(ply.con(), netServer.chatFormatter.format(player, msg),
+                                msg, player);
+                    }
+                });
+                // var translated = t.translate(msg, Translator.getAUTO_DETECT(), new
+                // Locale(ply.locale()));
+                // translated.whenComplete((result, throwable) -> {
+                // if (result != null && result != msg) {
+                // Call.sendMessage(ply.con(), netServer.chatFormatter.format(player, msg),
+                // msg + " [accent](" + result + ")", player);
+                // }
+                // if (!(throwable instanceof RateLimitedException
+                // || throwable instanceof UnsupportedLanguageException)) {
+                // Log.err(throwable);
+                // }
+                // });
+            });
+            // netServer.chatFormatter.format(player, message), message, player
+        } else {
+            // a command was sent, now get the output
+            if (response.type != ResponseType.valid) {
+                String text = netServer.invalidHandler.handle(player, response);
+                if (text != null) {
+                    player.sendMessage(text);
+                }
+            }
+        }
+    }
+}

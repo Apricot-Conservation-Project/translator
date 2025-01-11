@@ -1,0 +1,3 @@
+#!/bin/bash
+./make_mod.sh
+cd ../mserv; ./run.sh

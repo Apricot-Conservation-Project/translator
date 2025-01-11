@@ -1,0 +1,8 @@
+{
+  "name": "translator",
+  "author": "bendn",
+  "main": "main.TranslatorMain",
+  "description": "Translator plugin",
+  "version": 0.1,
+  "dependencies": ["flex"]
+}
