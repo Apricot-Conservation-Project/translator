@@ -76,6 +76,7 @@ public class TranslatorMain extends Plugin {
                     || throwable instanceof UnsupportedLanguageException)) {
                 // fallback
                 when.get(msg);
+                Log.info("handled!");
                 Log.err(throwable);
             }
         });
@@ -123,6 +124,7 @@ public class TranslatorMain extends Plugin {
                 return;
             }
 
+            Log.info("translating for server...");
             translate(msg, new Locale("en"), result -> {
                 if (result.hashCode() != msg.hashCode()) {
                     Log.info("&fi@: @", "&lc" + player.plainName(),
@@ -142,6 +144,7 @@ public class TranslatorMain extends Plugin {
                     player.sendUnformatted(player, msg);
                     return;
                 }
+                Log.info("translating for @", ply.plainName());
                 translate(msg, new Locale(ply.locale()), result -> {
                     if (result.hashCode() != msg.hashCode()) {
                         Call.sendMessage(ply.con(), netServer.chatFormatter.format(player, msg),
