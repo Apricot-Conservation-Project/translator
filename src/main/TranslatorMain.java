@@ -20,6 +20,7 @@ import com.xpdustry.flex.FlexAPI;
 import com.xpdustry.flex.translator.*;
 
 import java.util.Locale;
+import java.util.regex.Pattern;
 
 import static mindustry.Vars.*;
 
@@ -60,24 +61,21 @@ public class TranslatorMain extends Plugin {
 
     }
 
+    static final Pattern unifier = Pattern.compile("[\\u0F80-\\u107F]{2}$");
+
     public String unify(String m) {
-        var x = m.toCharArray();
-        String out = new String();
-        if ((int) x[x.length - 1] > 0xf80 && (int) x[x.length - 1] < 0x107f) {
-            for (int n = 0; n < x.length - 2; n++) {
-                out += x[n];
-            }
-        }
-        return out;
+        return unifier.matcher(m).replaceFirst("");
     }
 
     public void translate(String msg, Locale to, Cons<String> when) {
         t.translate(msg, Translator.getAUTO_DETECT(), to).whenComplete((result, throwable) -> {
-            // Log.debug("translation of @ to @: @ (@)", msg, to, result, throwable);
+            Log.info("translation of @ to @ -> @ (@)", msg, to, result, throwable);
             if (result != null)
                 when.get(result);
             if (!(throwable instanceof RateLimitedException
                     || throwable instanceof UnsupportedLanguageException)) {
+                // fallback
+                when.get(msg);
                 Log.err(throwable);
             }
         });
@@ -126,8 +124,12 @@ public class TranslatorMain extends Plugin {
             }
 
             translate(msg, new Locale("en"), result -> {
-                Log.info("&fi@: @", "&lc" + player.plainName(),
-                        "&lw" + msg + " (" + result + ")");
+                if (result.hashCode() != msg.hashCode()) {
+                    Log.info("&fi@: @", "&lc" + player.plainName(),
+                            "&lw" + msg + " (" + result + ")");
+                } else
+                    Log.info("&fi@: @", "&lc" + player.plainName(),
+                            "&lw" + msg);
             });
             // server console logging
             // Log.info("&fi@: @", "&lc" + player.plainName(), "&lw" + message);
