@@ -74,9 +74,9 @@ public class TranslatorMain extends Plugin {
             Log.info("translation of @ to @ -> @ (@)", msg, to, result, throwable);
             if (result != null)
                 when.get(result);
-            if (!(throwable instanceof RateLimitedException
+            if (throwable != null && !(throwable instanceof RateLimitedException
                     || throwable instanceof UnsupportedLanguageException)) {
-                Log.info("translation error " + throwable.getMessage());
+                Log.err(throwable.getMessage());
             }
         });
     }
