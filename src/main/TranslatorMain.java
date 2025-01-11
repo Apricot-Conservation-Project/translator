@@ -48,7 +48,7 @@ public class TranslatorMain extends Plugin {
                         o.sendMessage(raw, player, message);
                         return;
                     }
-                    translate(message, new Locale(o.locale()), x -> {
+                    translate(message, o.locale(), x -> {
                         if (x.hashCode() != message.hashCode())
                             o.sendMessage(raw, player, message + " [accent](" + x + ")");
                         else
@@ -67,17 +67,16 @@ public class TranslatorMain extends Plugin {
         return unifier.matcher(m).replaceFirst("");
     }
 
-    public void translate(String msg, Locale to, Cons<String> when) {
-        t.translate(msg, Translator.getAUTO_DETECT(), to).whenComplete((result, throwable) -> {
+    public void translate(String msg, String to, Cons<String> when) {
+        var split = to.split("_");
+        var locale = new Locale(split.length == 0 ? to : split[0]);
+        t.translate(msg, Translator.getAUTO_DETECT(), locale).whenComplete((result, throwable) -> {
             Log.info("translation of @ to @ -> @ (@)", msg, to, result, throwable);
             if (result != null)
                 when.get(result);
             if (!(throwable instanceof RateLimitedException
                     || throwable instanceof UnsupportedLanguageException)) {
-                // fallback
-                when.get(msg);
-                Log.info("handled!");
-                Log.err(throwable);
+                Log.info("translation error " + throwable.getMessage());
             }
         });
     }
@@ -125,7 +124,7 @@ public class TranslatorMain extends Plugin {
             }
 
             Log.info("translating for server...");
-            translate(msg, new Locale("en"), result -> {
+            translate(msg, "en", result -> {
                 if (result.hashCode() != msg.hashCode()) {
                     Log.info("&fi@: @", "&lc" + player.plainName(),
                             "&lw" + msg + " (" + result + ")");
@@ -145,7 +144,7 @@ public class TranslatorMain extends Plugin {
                     return;
                 }
                 Log.info("translating for @", ply.plainName());
-                translate(msg, new Locale(ply.locale()), result -> {
+                translate(msg, ply.locale(), result -> {
                     if (result.hashCode() != msg.hashCode()) {
                         Call.sendMessage(ply.con(), netServer.chatFormatter.format(player, msg),
                                 msg + " [accent](" + result + ")", player);
