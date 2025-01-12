@@ -16,30 +16,31 @@ import mindustry.net.NetConnection;
 import mindustry.net.Packets.KickReason;
 import mindustry.net.ValidateException;
 
-import com.github.benmanes.caffeine.cache.Ticker;
-import com.xpdustry.flex.translator.*;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
-import java.time.Duration;
-import java.util.Locale;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
 import static mindustry.Vars.*;
 
 public class TranslatorMain extends Plugin {
-    static Translator t;
-    static Executor executor = Executors.newCachedThreadPool();
+    static final Executor executor = Executors.newCachedThreadPool();
+    static final URI uri = URI
+            .create("https://translation.googleapis.com/language/translate/v2?key=" + System.getenv("GOOGLE_API_KEY"));
+    static final HttpClient c = HttpClient.newHttpClient();
 
     @Override
     public void init() {
-        t = new CachingTranslator((Translator) new GoogleBasicTranslator(System.getenv("GOOGLE_API_KEY"), executor),
-                executor, 1000,
-                Duration.ofMinutes(10),
-                Duration.ofSeconds(5), Ticker.systemTicker());
-        Vars.net.handleServer(SendChatMessageCallPacket.class, (con, p) -> {
-            intercept(con, p);
-        });
+        Vars.net.handleServer(SendChatMessageCallPacket.class, this::intercept);
     }
 
     @Override
@@ -56,16 +57,14 @@ public class TranslatorMain extends Plugin {
                         return;
                     }
                     translate(message, o.locale(), x -> {
-                        if (x.hashCode() != message.hashCode())
-                            o.sendMessage(raw, player, message + " [accent](" + x + ")");
-                        else
-                            o.sendMessage(raw, player, message);
-
-                    });
+                        var m = message + " [accent](" + x + ")";
+                        String r = "[#" + player.team().color.toString() + "]<T> "
+                                + netServer.chatFormatter.format(player, m);
+                        o.sendMessage(r, player, m);
+                    }, () -> o.sendMessage(raw, player, message));
                 });
             }
         });
-
     }
 
     static final Pattern unifier = Pattern.compile("[\\u0F80-\\u107F]{2}$");
@@ -74,19 +73,62 @@ public class TranslatorMain extends Plugin {
         return unifier.matcher(m).replaceFirst("");
     }
 
-    public void translate(String msg, String to, Cons<String> when) {
-        var split = to.split("_");
-        var locale = new Locale(split.length == 0 ? to : split[0]);
+    record translation(String msg, String to) {
+    }
 
-        t.translate(msg, new Locale("auto"), locale).whenComplete((result, throwable) -> {
-            Log.info("translation of @ to @ -> @ (@)", msg, to, result, throwable);
-            if (result != null)
-                when.get(result);
-            if (throwable != null && !(throwable instanceof RateLimitedException
-                    || throwable instanceof UnsupportedLanguageException)) {
-                Log.err(throwable.getMessage());
-            }
-        });
+    record result(String res) {
+    }
+
+    static final Cache<translation, result> cache = Caffeine.newBuilder().maximumSize(10000)
+            .expireAfterWrite(3, TimeUnit.HOURS).build();
+
+    public void translate(String msg, String to, Cons<String> translated, Runnable not) {
+        var split = to.split("_");
+        var locale = split.length == 0 ? to : split[0];
+        var result = cache.getIfPresent(new translation(msg, to));
+        if (result != null) {
+            Log.info("cache hit");
+            if (result.res != null)
+                translated.get(result.res);
+            else
+                not.run();
+            return;
+        }
+
+        JsonObject req = new JsonObject();
+        req.addProperty("q", msg);
+        req.addProperty("target", locale);
+        req.addProperty("format", "text");
+        c.sendAsync(
+                HttpRequest.newBuilder(uri).POST(HttpRequest.BodyPublishers.ofString(req.toString())).build(),
+                HttpResponse.BodyHandlers.ofString())
+                .thenApply(HttpResponse::body)
+                .thenApply(responseJson -> {
+                    JsonObject translation = JsonParser.parseString(responseJson).getAsJsonObject()
+                            .getAsJsonObject("data")
+                            .getAsJsonArray("translations")
+                            .get(0)
+                            .getAsJsonObject();
+                    var x = translation.get("translatedText").getAsString();
+                    var lang = translation.get("detectedSourceLanguage").getAsString();
+                    Log.info("translation of @ (@) to @ = @", msg, lang, locale, x);
+                    if (!lang.equals(locale)) {
+                        cache.put(new translation(msg, locale), new result(x));
+                        translated.get(x);
+                    } else {
+                        cache.put(new translation(msg, locale), new result(null));
+                        not.run();
+                    }
+                    return x;
+                });
+        ;
+        // var res = t.translate(List.of(msg),
+        // Map.of(TranslateRpc.Option.TARGET_LANGUAGE, locale)).get(0);
+        // var x = res.getTranslatedText();
+        // var lang = res.getDetectedSourceLanguage();
+        // cache.put(Tuple.of(msg, locale), x);
+        // Log.info("translation of @ (@) to @ -> @ (@)", msg, lang, to, x);
+        // when.get("");
     }
 
     public void intercept(NetConnection con, SendChatMessageCallPacket p) {
@@ -94,12 +136,12 @@ public class TranslatorMain extends Plugin {
         final var player = con.player;
         // do not receive chat messages from clients that are too young or not
         // registered
-        if (net.server() && player != null && player.con != null && (Time.timeSinceMillis(player.con.connectTime) < 500
-                || !player.con.hasConnected || !player.isAdded()))
+        if ((net.server() && player != null && player.con != null && (Time.timeSinceMillis(player.con.connectTime) < 500
+                || !player.con.hasConnected || !player.isAdded())) || player == null)
             return;
 
         // detect and kick for foul play
-        if (player != null && player.con != null && !player.con.chatRate.allow(2000, Config.chatSpamLimit.num())) {
+        if (player.con != null && !player.con.chatRate.allow(2000, Config.chatSpamLimit.num())) {
             player.con.kick(KickReason.kick);
             netServer.admins.blacklistDos(player.con.address);
             return;
@@ -133,12 +175,11 @@ public class TranslatorMain extends Plugin {
 
             Log.info("translating for server...");
             translate(msg, "en", result -> {
-                if (result.hashCode() != msg.hashCode()) {
-                    Log.info("&fi@: @", "&lc" + player.plainName(),
-                            "&lw" + msg + " (" + result + ")");
-                } else
-                    Log.info("&fi@: @", "&lc" + player.plainName(),
-                            "&lw" + msg);
+                Log.info("&fi@: @", "&lc" + player.plainName(),
+                        "&lw" + msg + " (" + result + ")");
+            }, () -> {
+                Log.info("&fi@: @", "&lc" + player.plainName(),
+                        "&lw" + msg);
             });
             // server console logging
             // Log.info("&fi@: @", "&lc" + player.plainName(), "&lw" + message);
@@ -153,16 +194,13 @@ public class TranslatorMain extends Plugin {
                 }
                 Log.info("translating for @", ply.plainName());
                 translate(msg, ply.locale(), result -> {
-                    if (result.hashCode() != msg.hashCode()) {
-                        Call.sendMessage(ply.con(), netServer.chatFormatter.format(player, msg),
-                                msg + " [accent](" + result + ")", player);
-                    } else {
-                        Call.sendMessage(ply.con(), netServer.chatFormatter.format(player, msg),
-                                msg, player);
-                    }
-                });
+                    // ply.sendMessage(result);
+                    var m = msg + " [accent](" + result + ")";
+                    Call.sendMessage(ply.con(), netServer.chatFormatter.format(player, m),
+                            m, player);
+                }, () -> Call.sendMessage(ply.con(), netServer.chatFormatter.format(player, msg),
+                        msg, player));
             });
-            // netServer.chatFormatter.format(player, message), message, player
         } else {
             // a command was sent, now get the output
             if (response.type != ResponseType.valid) {

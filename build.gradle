@@ -20,8 +20,9 @@ dependencies{
     compileOnly "com.github.Anuken.Arc:arc-core:$mindustryVersion"
     compileOnly "com.github.Anuken.Mindustry:core:$mindustryVersion"
     // compileOnly "com.xpdustry:flex:1.1.0"
-    implementation("com.github.ben-manes.caffeine:caffeine:3.1.8")
-    implementation "com.xpdustry:flex-translator:1.2.0-SNAPSHOT"
+    implementation "com.github.ben-manes.caffeine:caffeine:3.1.8"
+    // implementation "com.xpdustry:flex-translator:1.2.0-SNAPSHOT"
+    implementation 'com.google.code.gson:gson:2.11.0'
     // implementation "com.github.Apricot-Conservation-Project:base:5d34d74"
 }
 
