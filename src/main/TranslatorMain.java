@@ -16,20 +16,27 @@ import mindustry.net.NetConnection;
 import mindustry.net.Packets.KickReason;
 import mindustry.net.ValidateException;
 
-import com.xpdustry.flex.FlexAPI;
+import com.github.benmanes.caffeine.cache.Ticker;
 import com.xpdustry.flex.translator.*;
 
+import java.time.Duration;
 import java.util.Locale;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 import java.util.regex.Pattern;
 
 import static mindustry.Vars.*;
 
 public class TranslatorMain extends Plugin {
     static Translator t;
+    static Executor executor = Executors.newCachedThreadPool();
 
     @Override
     public void init() {
-        t = FlexAPI.get().getTranslator();
+        t = new CachingTranslator((Translator) new GoogleBasicTranslator(System.getenv("GOOGLE_API_KEY"), executor),
+                executor, 1000,
+                Duration.ofMinutes(10),
+                Duration.ofSeconds(5), Ticker.systemTicker());
         Vars.net.handleServer(SendChatMessageCallPacket.class, (con, p) -> {
             intercept(con, p);
         });
@@ -70,7 +77,8 @@ public class TranslatorMain extends Plugin {
     public void translate(String msg, String to, Cons<String> when) {
         var split = to.split("_");
         var locale = new Locale(split.length == 0 ? to : split[0]);
-        t.translate(msg, Translator.getAUTO_DETECT(), locale).whenComplete((result, throwable) -> {
+
+        t.translate(msg, new Locale("auto"), locale).whenComplete((result, throwable) -> {
             Log.info("translation of @ to @ -> @ (@)", msg, to, result, throwable);
             if (result != null)
                 when.get(result);
@@ -153,18 +161,6 @@ public class TranslatorMain extends Plugin {
                                 msg, player);
                     }
                 });
-                // var translated = t.translate(msg, Translator.getAUTO_DETECT(), new
-                // Locale(ply.locale()));
-                // translated.whenComplete((result, throwable) -> {
-                // if (result != null && result != msg) {
-                // Call.sendMessage(ply.con(), netServer.chatFormatter.format(player, msg),
-                // msg + " [accent](" + result + ")", player);
-                // }
-                // if (!(throwable instanceof RateLimitedException
-                // || throwable instanceof UnsupportedLanguageException)) {
-                // Log.err(throwable);
-                // }
-                // });
             });
             // netServer.chatFormatter.format(player, message), message, player
         } else {

@@ -159,5 +159,5 @@ android/libs/
 ## keys
 x.yaml
 bin
-gradle/wrapper
+gradle/
 .vscode
