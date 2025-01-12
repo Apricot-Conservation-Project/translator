@@ -2,6 +2,7 @@ package main;
 
 import arc.*;
 import arc.func.Cons;
+import arc.struct.Seq;
 import arc.util.CommandHandler;
 import arc.util.CommandHandler.CommandResponse;
 import arc.util.CommandHandler.ResponseType;
@@ -111,8 +112,13 @@ public class TranslatorMain extends Plugin {
                             .getAsJsonObject();
                     var x = translation.get("translatedText").getAsString();
                     var lang = translation.get("detectedSourceLanguage").getAsString();
-                    Log.info("translation of @ (@) to @ = @", msg, lang, locale, x);
-                    if (!lang.equals(locale)) {
+                    var any = false;
+                    for (var elem : new String[] { "en", "fil", "ru", "ja", "zh", "zh", "pt", "vi", "hi", "ms",
+                            "id" }) {
+                        any |= lang.startsWith(elem);
+                    }
+                    if (any & !lang.equals(locale)) {
+                        Log.info("translation of @ (@) to @ = @", msg, lang, locale, x);
                         cache.put(new translation(msg, locale), new result(x));
                         translated.get(x);
                     } else {
