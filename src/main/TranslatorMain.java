@@ -2,7 +2,6 @@ package main;
 
 import arc.*;
 import arc.func.Cons;
-import arc.struct.Seq;
 import arc.util.CommandHandler;
 import arc.util.CommandHandler.CommandResponse;
 import arc.util.CommandHandler.ResponseType;
@@ -19,13 +18,9 @@ import mindustry.net.ValidateException;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
+import com.xpdustry.flex.translator.Translator;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import java.util.Locale;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -35,12 +30,11 @@ import static mindustry.Vars.*;
 
 public class TranslatorMain extends Plugin {
     static final Executor executor = Executors.newCachedThreadPool();
-    static final URI uri = URI
-            .create("https://translation.googleapis.com/language/translate/v2?key=" + System.getenv("GOOGLE_API_KEY"));
-    static final HttpClient c = HttpClient.newHttpClient();
+    static Translator t = null;
 
     @Override
     public void init() {
+        t = Translator.googleBasic(System.getenv("GOOGLE_API_KEY"), executor);
         Vars.net.handleServer(SendChatMessageCallPacket.class, this::intercept);
     }
 
@@ -95,46 +89,22 @@ public class TranslatorMain extends Plugin {
                 not.run();
             return;
         }
-
-        JsonObject req = new JsonObject();
-        req.addProperty("q", msg);
-        req.addProperty("target", locale);
-        req.addProperty("format", "text");
-        c.sendAsync(
-                HttpRequest.newBuilder(uri).POST(HttpRequest.BodyPublishers.ofString(req.toString())).build(),
-                HttpResponse.BodyHandlers.ofString())
-                .thenApply(HttpResponse::body)
-                .thenApply(responseJson -> {
-                    JsonObject translation = JsonParser.parseString(responseJson).getAsJsonObject()
-                            .getAsJsonObject("data")
-                            .getAsJsonArray("translations")
-                            .get(0)
-                            .getAsJsonObject();
-                    var x = translation.get("translatedText").getAsString();
-                    var lang = translation.get("detectedSourceLanguage").getAsString();
-                    var any = false;
-                    for (var elem : new String[] { "en", "fil", "ru", "ja", "zh", "zh", "pt", "vi", "hi", "ms",
-                            "id" }) {
-                        any |= lang.startsWith(elem);
-                    }
-                    if (any & !lang.equals(locale)) {
-                        Log.info("translation of @ (@) to @ = @", msg, lang, locale, x);
-                        cache.put(new translation(msg, locale), new result(x));
-                        translated.get(x);
-                    } else {
-                        cache.put(new translation(msg, locale), new result(null));
-                        not.run();
-                    }
-                    return x;
-                });
-        ;
-        // var res = t.translate(List.of(msg),
-        // Map.of(TranslateRpc.Option.TARGET_LANGUAGE, locale)).get(0);
-        // var x = res.getTranslatedText();
-        // var lang = res.getDetectedSourceLanguage();
-        // cache.put(Tuple.of(msg, locale), x);
-        // Log.info("translation of @ (@) to @ -> @ (@)", msg, lang, to, x);
-        // when.get("");
+        t.translateDetecting(msg, Translator.getAUTO_DETECT(), Locale.forLanguageTag(locale)).thenAccept(res -> {
+            var x = res.getText();
+            var lang = res.getDetected().toLanguageTag();
+            var any = false;
+            for (var elem : new String[] { "es", "en", "fil", "ru", "ja", "zh", "zh", "pt", "vi", "hi", "ms", "id" }) {
+                any |= lang.startsWith(elem);
+            }
+            Log.info("translation of @ (@) to @ = @", msg, lang, locale, x);
+            if (any & !lang.equals(locale)) {
+                cache.put(new translation(msg, locale), new result(x));
+                translated.get(x);
+            } else {
+                cache.put(new translation(msg, locale), new result(null));
+                not.run();
+            }
+        });
     }
 
     public void intercept(NetConnection con, SendChatMessageCallPacket p) {
