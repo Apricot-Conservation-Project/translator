@@ -2,6 +2,7 @@ package main;
 
 import arc.*;
 import arc.func.Cons;
+import arc.struct.Seq;
 import arc.util.CommandHandler;
 import arc.util.CommandHandler.CommandResponse;
 import arc.util.CommandHandler.ResponseType;
@@ -20,7 +21,9 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.xpdustry.flex.translator.Translator;
 
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -42,22 +45,27 @@ public class TranslatorMain extends Plugin {
     public void registerClientCommands(CommandHandler handler) {
         handler.removeCommand("t");
         handler.<Player>register("t", "<message...>", "Send a message only to your teammates.", (args, player) -> {
-            String message = netServer.admins.filterMessage(player, args[0]);
-            if (message != null) {
-                Groups.player.each(p -> p.team() == player.team(), o -> {
-                    String raw = "[#" + player.team().color.toString() + "]<T> "
-                            + netServer.chatFormatter.format(player, message);
-                    if (o == player) {
-                        o.sendMessage(raw, player, message);
-                        return;
-                    }
-                    translate(message, o.locale(), x -> {
-                        var m = message + " [accent](" + x + ")";
+            String msg = unify(netServer.admins.filterMessage(player, args[0]));
+            if (msg != null) {
+                var locales = new HashSet<String>();
+                Groups.player.each(p -> p.team() == player.team(), pl -> {
+                    locales.add(locale(pl.locale()));
+                });
+                locales.add("en");
+                String raw = "[#" + player.team().color.toString() + "]<T> "
+                        + netServer.chatFormatter.format(player, msg);
+                for (var e : locales) {
+                    translate(msg, e, result -> {
+                        var m = msg + " [accent](" + result + ")";
                         String r = "[#" + player.team().color.toString() + "]<T> "
                                 + netServer.chatFormatter.format(player, m);
-                        o.sendMessage(r, player, m);
-                    }, () -> o.sendMessage(raw, player, message));
-                });
+                        Groups.player.each(x -> x.team() == player.team() && locale(x.locale()).equals(e),
+                                pl -> pl.sendMessage(r, player, m));
+                    }, () -> {
+                        Groups.player.each(x -> x.team() == player.team() && locale(x.locale()).equals(e),
+                                pl -> pl.sendMessage(raw, player, msg));
+                    });
+                }
             }
         });
     }
@@ -75,30 +83,35 @@ public class TranslatorMain extends Plugin {
     }
 
     static final Cache<translation, result> cache = Caffeine.newBuilder().maximumSize(10000)
-            .expireAfterWrite(3, TimeUnit.HOURS).build();
+            .expireAfterWrite(3, TimeUnit.HOURS).expireAfterAccess(10, TimeUnit.HOURS).build();
 
-    public void translate(String msg, String to, Cons<String> translated, Runnable not) {
-        var split = to.split("_");
-        var locale = split.length == 0 ? to : split[0];
-        var key = new translation(msg, locale);
+    public String locale(String locale) {
+        var x = locale.split("_");
+        return (x.length == 0) ? locale : x[0];
+    }
+
+    public CompletableFuture<Void> translate(String msg, String to, Cons<String> translated, Runnable not) {
+        var key = new translation(msg, to);
         var result = cache.getIfPresent(key);
+        Log.info("checking key @, gets result @ (code @) (@)", key, result == null ? "nul" : result.toString(),
+                key.hashCode(), Seq.with(cache.asMap().values().toArray()).toString());
         if (result != null) {
             Log.info("cache hit");
             if (result.res != null)
                 translated.get(result.res);
             else
                 not.run();
-            return;
+            return CompletableFuture.completedFuture(null);
         }
-        t.translateDetecting(msg, Translator.getAUTO_DETECT(), Locale.forLanguageTag(locale)).thenAccept(res -> {
+        return t.translateDetecting(msg, Translator.getAUTO_DETECT(), Locale.forLanguageTag(to)).thenAccept(res -> {
             var x = res.getText();
             var lang = res.getDetected().toLanguageTag();
             var any = false;
             for (var elem : new String[] { "es", "en", "fil", "ru", "ja", "zh", "zh", "pt", "vi", "hi", "ms", "id" }) {
                 any |= lang.startsWith(elem);
             }
-            Log.info("translation of @ (@) to @ = @", msg, lang, locale, x);
-            if (any & !lang.equals(locale) & !msg.equals(x)) {
+            Log.info("translation of @ (@) to @ = @", msg, lang, to, x);
+            if (any & !lang.equals(to) & !msg.equals(x)) {
                 cache.put(key, new result(x));
                 translated.get(x);
             } else {
@@ -150,34 +163,31 @@ public class TranslatorMain extends Plugin {
                 return;
             }
 
-            Log.info("translating for server...");
-            translate(msg, "en", result -> {
-                Log.info("&fi@: @", "&lc" + player.plainName(),
-                        "&lw" + msg + " (" + result + ")");
-            }, () -> {
-                Log.info("&fi@: @", "&lc" + player.plainName(),
-                        "&lw" + msg);
+            var locales = new HashSet<String>();
+            Groups.player.each(pl -> {
+                locales.add(locale(pl.locale()));
             });
-            // server console logging
-            // Log.info("&fi@: @", "&lc" + player.plainName(), "&lw" + message);
-
-            // invoke event for all clients but also locally
-            // this is required so other clients get the correct name even if they don't
-            // know who's sending it yet
-            Groups.player.each(ply -> {
-                if (ply == player) {
-                    player.sendUnformatted(player, msg);
-                    return;
-                }
-                Log.info("translating for @", ply.plainName());
-                translate(msg, ply.locale(), result -> {
-                    // ply.sendMessage(result);
+            locales.add("en");
+            for (var e : locales) {
+                Log.info(e);
+                translate(msg, e, result -> {
                     var m = msg + " [accent](" + result + ")";
-                    Call.sendMessage(ply.con(), netServer.chatFormatter.format(player, m),
-                            m, player);
-                }, () -> Call.sendMessage(ply.con(), netServer.chatFormatter.format(player, msg),
-                        msg, player));
-            });
+                    var f = netServer.chatFormatter.format(player, m);
+                    Groups.player.each(x -> locale(x.locale()).equals(e),
+                            pl -> Call.sendMessage(pl.con(), f, m, player));
+                    if (e.equals("en"))
+                        Log.info("&fi@: @", "&lc" + player.plainName(),
+                                "&lw" + msg + " (" + result + ")");
+
+                }, () -> {
+                    var f = netServer.chatFormatter.format(player, msg);
+                    Groups.player.each(x -> locale(x.locale()).equals(e),
+                            pl -> Call.sendMessage(pl.con(), f, msg, player));
+                    if (e.equals("en"))
+                        Log.info("&fi@: @", "&lc" + player.plainName(),
+                                "&lw" + msg);
+                });
+            }
         } else {
             // a command was sent, now get the output
             if (response.type != ResponseType.valid) {
