@@ -80,7 +80,8 @@ public class TranslatorMain extends Plugin {
     public void translate(String msg, String to, Cons<String> translated, Runnable not) {
         var split = to.split("_");
         var locale = split.length == 0 ? to : split[0];
-        var result = cache.getIfPresent(new translation(msg, to));
+        var key = new translation(msg, locale);
+        var result = cache.getIfPresent(key);
         if (result != null) {
             Log.info("cache hit");
             if (result.res != null)
@@ -98,10 +99,10 @@ public class TranslatorMain extends Plugin {
             }
             Log.info("translation of @ (@) to @ = @", msg, lang, locale, x);
             if (any & !lang.equals(locale)) {
-                cache.put(new translation(msg, locale), new result(x));
+                cache.put(key, new result(x));
                 translated.get(x);
             } else {
-                cache.put(new translation(msg, locale), new result(null));
+                cache.put(key, new result(null));
                 not.run();
             }
         });
