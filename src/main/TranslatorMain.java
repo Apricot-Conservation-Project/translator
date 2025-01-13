@@ -98,7 +98,7 @@ public class TranslatorMain extends Plugin {
                 any |= lang.startsWith(elem);
             }
             Log.info("translation of @ (@) to @ = @", msg, lang, locale, x);
-            if (any & !lang.equals(locale)) {
+            if (any & !lang.equals(locale) & !msg.equals(x)) {
                 cache.put(key, new result(x));
                 translated.get(x);
             } else {
