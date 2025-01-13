@@ -93,8 +93,6 @@ public class TranslatorMain extends Plugin {
     public CompletableFuture<Void> translate(String msg, String to, Cons<String> translated, Runnable not) {
         var key = new translation(msg, to);
         var result = cache.getIfPresent(key);
-        Log.info("checking key @, gets result @ (code @) (@)", key, result == null ? "nul" : result.toString(),
-                key.hashCode(), Seq.with(cache.asMap().values().toArray()).toString());
         if (result != null) {
             Log.info("cache hit");
             if (result.res != null)
@@ -169,7 +167,6 @@ public class TranslatorMain extends Plugin {
             });
             locales.add("en");
             for (var e : locales) {
-                Log.info(e);
                 translate(msg, e, result -> {
                     var m = msg + " [accent](" + result + ")";
                     var f = netServer.chatFormatter.format(player, m);
