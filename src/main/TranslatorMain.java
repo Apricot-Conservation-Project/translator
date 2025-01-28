@@ -105,7 +105,8 @@ public class TranslatorMain extends Plugin {
             var x = res.getText();
             var lang = res.getDetected().toLanguageTag();
             var any = false;
-            for (var elem : new String[] { "es", "en", "fil", "ru", "ja", "uz", "ce", "zh", "pt", "vi", "hi", "ms", "id" }) {
+            for (var elem : new String[] { "es", "en", "fil", "ru", "ja",
+                    "uz", "ce", "zh", "pt", "vi", "hi", "ms", "id", "de" }) {
                 any |= lang.startsWith(elem);
             }
             Log.info("translation of @ (@) to @ = @", msg, lang, to, x);
